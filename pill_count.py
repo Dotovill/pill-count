@@ -2,13 +2,11 @@ import streamlit as st
 import cv2
 import numpy as np
 from PIL import Image
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 
-# 페이지 설정
 st.set_page_config(page_title="통합 알약 카운터", layout="centered")
 st.title("💊 통합 알약 카운팅 시스템")
 
-# --- 공통 분석 함수 (AI 학습 데이터 없이 형태 분석) ---
+# --- 공통 분석 함수 ---
 def count_pills(frame, sens, min_size, blur_val):
     gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     blurred = cv2.GaussianBlur(gray, (blur_val, blur_val), 0)
@@ -35,40 +33,24 @@ with st.sidebar:
     blur_val = st.slider("노이즈 제거", 1, 31, 15, step=2)
     min_size = st.slider("최소 알약 크기", 50, 3000, 300)
 
-# --- 메인 화면 탭 구성 ---
-tab1, tab2, tab3 = st.tabs(["🎥 실시간 비추기", "📸 사진 찍기", "📁 파일 올리기"])
+# --- 메인 화면 탭 (실시간 대신 2가지 강력한 모드) ---
+tab1, tab2 = st.tabs(["📸 카메라 촬영", "📁 파일 업로드"])
 
-# 1) 실시간으로 개수 표시 (Live)
 with tab1:
-    st.subheader("실시간 라이브 카운팅")
-    st.info("카메라를 비추면 실시간으로 점이 찍힙니다. (PC 환경 권장)")
-    
-    class PillProcessor(VideoProcessorBase):
-        def recv(self, frame):
-            img = frame.to_ndarray(format="rgb24")
-            processed_img, _ = count_pills(img, sens, min_size, blur_val)
-            return frame.from_ndarray(processed_img, format="rgb24")
-
-    webrtc_streamer(key="pill-live", video_processor_factory=PillProcessor)
-
-# 2) 사진으로 개수 표시 (기존 촬영)
-with tab2:
-    st.subheader("카메라 촬영 분석")
-    img_snap = st.camera_input("알약 사진을 찍으세요", key="snap")
+    st.subheader("카메라로 즉시 분석")
+    # 스마트폰 브라우저에서 가장 안정적인 방식
+    img_snap = st.camera_input("알약을 비추고 사진을 찍으세요")
     if img_snap:
         img = Image.open(img_snap)
-        frame = np.array(img)
-        res_img, cnt = count_pills(frame, sens, min_size, blur_val)
+        res_img, cnt = count_pills(np.array(img), sens, min_size, blur_val)
         st.image(res_img)
-        st.success(f"감지된 개수: {cnt}개")
+        st.metric("감지된 개수", f"{cnt}개")
 
-# 3) 파일 올려서 세기 (업로드)
-with tab3:
-    st.subheader("이미지 파일 업로드")
-    img_up = st.file_uploader("이미지를 업로드하세요", type=['jpg','png','jpeg'], key="up")
+with tab2:
+    st.subheader("앨범/파일에서 가져오기")
+    img_up = st.file_uploader("이미지를 업로드하세요", type=['jpg','png','jpeg'])
     if img_up:
         img = Image.open(img_up)
-        frame = np.array(img)
-        res_img, cnt = count_pills(frame, sens, min_size, blur_val)
+        res_img, cnt = count_pills(np.array(img), sens, min_size, blur_val)
         st.image(res_img)
-        st.metric("Total Count", f"{cnt} 개")
+        st.metric("감지된 개수", f"{cnt}개")
