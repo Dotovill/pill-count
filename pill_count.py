@@ -3,74 +3,67 @@ import cv2
 import numpy as np
 from PIL import Image
 
-# 1. 페이지 기본 설정
-st.set_page_config(page_title="약사 전용 알약 카운터", layout="centered")
-st.markdown("<h2 style='text-align: center;'>💊 약사 전용 알약 카운터</h2>", unsafe_allow_html=True)
+# 1. 화면 설정
+st.set_page_config(page_title="알약 카운터", layout="centered")
+st.title("🟢 순수 이미지 분석 카운터")
+st.write("이미지 분석을 통해 알약의 개수만 정확히 셉니다.")
 
-# --- 핵심 분석 함수 ---
-def count_pills(frame, sens, min_size, blur_val):
-    # 1. 흑백 변환
+# 2. 사이드바 설정 (인식 조절용)
+with st.sidebar:
+    st.header("⚙️ 인식 조절")
+    # 배경이 어두울수록 인식이 잘 됩니다.
+    sens = st.slider("민감도", 0, 255, 120)
+    # 너무 작은 먼지나 글씨는 무시하도록 설정
+    min_size = st.slider("최소 알약 크기", 100, 5000, 500)
+
+# 3. 파일 업로드 (기본 카메라 앱 활용 가능)
+img_file = st.file_uploader("알약 사진을 올리거나 새로 찍으세요", type=['jpg', 'jpeg', 'png'])
+
+if img_file:
+    # 사진 가져오기
+    img = Image.open(img_file)
+    frame = np.array(img)
+    
+    # --- 이미지 처리 과정 ---
+    # A. 흑백 변환
     gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     
-    # 2. 노이즈 제거 (글씨처럼 얇은 선들을 뭉개서 지워버림)
-    blurred = cv2.GaussianBlur(gray, (blur_val, blur_val), 0)
+    # B. 노이즈 제거 (화질 개선)
+    blurred = cv2.GaussianBlur(gray, (11, 11), 0)
     
-    # 3. 글씨 무시 로직: 배경보다 '밝은' 물체만 추출
-    _, thresh = cv2.threshold(blurred, sens, 255, cv2.THRESH_BINARY)
+    # C. 이진화 (배경과 약 분리)
+    _, thresh = cv2.threshold(blurred, sens, 255, cv2.THRESH_BINARY_INV)
     
-    # 4. 테두리 찾기
+    # D. 테두리 인식
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    output_img = frame.copy()
     count = 0
+    display_img = frame.copy()
     
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        if area > min_size:
+        if area > min_size: # 너무 작은 건 무시
             M = cv2.moments(cnt)
             if M["m00"] != 0:
                 cX = int(M["m10"] / M["m00"])
                 cY = int(M["m01"] / M["m00"])
                 
-                # 초록색 점과 흰색 테두리 표시
-                cv2.circle(output_img, (cX, cY), 20, (0, 255, 0), -1)
-                cv2.circle(output_img, (cX, cY), 25, (255, 255, 255), 3)
+                # 초록색 점 찍기
+                cv2.circle(display_img, (cX, cY), 20, (0, 255, 0), -1)
+                cv2.circle(display_img, (cX, cY), 25, (255, 255, 255), 3)
                 count += 1
-                
-    return output_img, count, thresh
 
-# --- 사이드바: 조절 설정 ---
-with st.sidebar:
-    st.header("⚙️ 정밀 인식 설정")
-    st.write("글씨가 같이 잡히면 '민감도'를 높이세요.")
-    sens = st.slider("민감도 (밝기 기준)", 10, 255, 150)
-    blur_val = st.slider("글씨 뭉개기 강도", 1, 31, 15, step=2)
-    min_size = st.slider("최소 알약 크기", 100, 5000, 500)
+    # 4. 최종 결과 출력
+    st.image(display_img, use_container_width=True)
     
-    st.divider()
-    st.info("💡 팁: 검은색 종이 위에서 찍으면 가장 정확합니다!")
+    # 결과 숫자 표시
+    st.markdown(f"""
+        <div style="text-align: center; background-color: #262730; padding: 20px; border-radius: 10px;">
+            <p style="font-size: 20px; color: white;">감지된 알약 수</p>
+            <h1 style="font-size: 100px; color: #00FF00; margin: 0;">{count}</h1>
+        </div>
+    """, unsafe_allow_html=True)
 
-# --- 메인 화면 탭 구성 ---
-tab1, tab2 = st.tabs(["📸 카메라 촬영", "📁 파일 업로드"])
-
-with tab1:
-    img_snap = st.camera_input("알약을 평평하게 펴고 찍어주세요")
-    if img_snap:
-        img = Image.open(img_snap)
-        frame = np.array(img)
-        res_img, cnt, debug_img = count_pills(frame, sens, min_size, blur_val)
-        st.image(res_img, use_container_width=True)
-        st.success(f"감지된 알약: {cnt}개")
-        with st.expander("AI 분석 레이어 확인"):
-            st.image(debug_img, caption="흰색 덩어리만 알약으로 인식됩니다.")
-
-with tab2:
-    img_up = st.file_uploader("앨범에서 사진 선택", type=['jpg', 'jpeg', 'png'])
-    if img_up:
-        img = Image.open(img_up)
-        frame = np.array(img)
-        res_img, cnt, debug_img = count_pills(frame, sens, min_size, blur_val)
-        st.image(res_img, use_container_width=True)
-        st.metric("감지된 개수", f"{cnt} 개")
-        with st.expander("AI 분석 레이어 확인"):
-            st.image(debug_img, caption="분석용 흑백 화면")
+    # 인식 상태 확인용 (디버깅)
+    with st.expander("인식 과정 보기"):
+        st.image(thresh, caption="흰색 부분이 약으로 인식된 영역입니다.")
