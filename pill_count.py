@@ -2,67 +2,73 @@ import streamlit as st
 import cv2
 import numpy as np
 from PIL import Image
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 
-st.set_page_config(page_title="필아이 스타일 카운터", layout="centered")
-st.markdown("<h2 style='text-align: center;'>🟢 Pill Counter Live</h2>", unsafe_allow_html=True)
+# 페이지 설정
+st.set_page_config(page_title="통합 알약 카운터", layout="centered")
+st.title("💊 통합 알약 카운팅 시스템")
 
-# 사이드바 설정
-with st.sidebar:
-    st.header("⚙️ 인식 정밀도")
-    # 배경 대비 감도 (낮을수록 민감하게 반응)
-    sens = st.slider("민감도", 10, 255, 120)
-    # 잡음 제거 강도 (홀수만 가능)
-    blur_val = st.slider("노이즈 제거", 1, 31, 15, step=2)
-    # 너무 작은 점 무시
-    min_area = st.slider("최소 알약 크기", 50, 3000, 300)
-
-img_file = st.camera_input("알약 사진을 찍어주세요")
-
-if img_file:
-    img = Image.open(img_file)
-    frame = np.array(img)
-    
-    # 1. 전처리 (흑백 -> 블러)
+# --- 공통 분석 함수 (AI 학습 데이터 없이 형태 분석) ---
+def count_pills(frame, sens, min_size, blur_val):
     gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     blurred = cv2.GaussianBlur(gray, (blur_val, blur_val), 0)
-    
-    # 2. 이진화 (배경과 알약 분리)
     _, thresh = cv2.threshold(blurred, sens, 255, cv2.THRESH_BINARY_INV)
-    
-    # 3. 테두리 찾기
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # 결과를 그릴 빈 이미지 준비
     output_img = frame.copy()
     count = 0
-    
-    # ❗ [수정된 핵심 부분] 모든 테두리를 하나씩 돌며 점을 찍습니다.
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        if area > min_area:
+        if area > min_size:
             M = cv2.moments(cnt)
             if M["m00"] != 0:
-                # 알약의 중심점 계산
-                cX = int(M["m10"] / M["m00"])
-                cY = int(M["m01"] / M["m00"])
-                
-                # 초록색 점 찍기 (이 코드가 for문 안에서 매번 실행되어야 합니다)
+                cX, cY = int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
                 cv2.circle(output_img, (cX, cY), 20, (0, 255, 0), -1)
-                # 하얀색 테두리 추가
                 cv2.circle(output_img, (cX, cY), 25, (255, 255, 255), 3)
                 count += 1
+    return output_img, count
 
-    # 4. 결과 출력
-    st.image(output_img, use_container_width=True)
+# --- 사이드바 설정 ---
+with st.sidebar:
+    st.header("⚙️ 인식 설정")
+    sens = st.slider("민감도", 10, 255, 120)
+    blur_val = st.slider("노이즈 제거", 1, 31, 15, step=2)
+    min_size = st.slider("최소 알약 크기", 50, 3000, 300)
+
+# --- 메인 화면 탭 구성 ---
+tab1, tab2, tab3 = st.tabs(["🎥 실시간 비추기", "📸 사진 찍기", "📁 파일 올리기"])
+
+# 1) 실시간으로 개수 표시 (Live)
+with tab1:
+    st.subheader("실시간 라이브 카운팅")
+    st.info("카메라를 비추면 실시간으로 점이 찍힙니다. (PC 환경 권장)")
     
-    # 하단 카운트 박스
-    st.markdown(f"""
-        <div style="background-color:#1e1e1e; padding:20px; border-radius:15px; text-align:center;">
-            <span style="color:#00ff00; font-size:80px; font-weight:bold;">{count}</span>
-            <p style="color:white; font-size:20px;">알약이 감지되었습니다</p>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    # AI가 세상을 어떻게 보고 있는지 확인 (디버그용)
-    with st.expander("인식 과정 확인"):
-        st.image(thresh, caption="하얗게 뭉쳐 보이는 부분이 있다면 약 사이를 띄워주세요.")
+    class PillProcessor(VideoProcessorBase):
+        def recv(self, frame):
+            img = frame.to_ndarray(format="rgb24")
+            processed_img, _ = count_pills(img, sens, min_size, blur_val)
+            return frame.from_ndarray(processed_img, format="rgb24")
+
+    webrtc_streamer(key="pill-live", video_processor_factory=PillProcessor)
+
+# 2) 사진으로 개수 표시 (기존 촬영)
+with tab2:
+    st.subheader("카메라 촬영 분석")
+    img_snap = st.camera_input("알약 사진을 찍으세요", key="snap")
+    if img_snap:
+        img = Image.open(img_snap)
+        frame = np.array(img)
+        res_img, cnt = count_pills(frame, sens, min_size, blur_val)
+        st.image(res_img)
+        st.success(f"감지된 개수: {cnt}개")
+
+# 3) 파일 올려서 세기 (업로드)
+with tab3:
+    st.subheader("이미지 파일 업로드")
+    img_up = st.file_uploader("이미지를 업로드하세요", type=['jpg','png','jpeg'], key="up")
+    if img_up:
+        img = Image.open(img_up)
+        frame = np.array(img)
+        res_img, cnt = count_pills(frame, sens, min_size, blur_val)
+        st.image(res_img)
+        st.metric("Total Count", f"{cnt} 개")
