@@ -3,54 +3,65 @@ import cv2
 import numpy as np
 from PIL import Image
 
-st.set_page_config(page_title="통합 알약 카운터", layout="centered")
-st.title("💊 통합 알약 카운팅 시스템")
+# 1. 페이지 기본 설정
+st.set_page_config(page_title="약사 전용 알약 카운터", layout="centered")
+st.markdown("<h2 style='text-align: center;'>💊 약사 전용 알약 카운터</h2>", unsafe_allow_html=True)
 
-# --- 공통 분석 함수 ---
+# --- 핵심 분석 함수 ---
 def count_pills(frame, sens, min_size, blur_val):
+    # 1. 흑백 변환
     gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    
+    # 2. 노이즈 제거 (글씨처럼 얇은 선들을 뭉개서 지워버림)
     blurred = cv2.GaussianBlur(gray, (blur_val, blur_val), 0)
-    _, thresh = cv2.threshold(blurred, sens, 255, cv2.THRESH_BINARY_INV)
+    
+    # 3. ⭐ 핵심 수정: 배경보다 '밝은' 물체만 추출 (글씨 무시 로직)
+    # sens 값보다 밝은 것(알약)은 흰색, 어두운 것(글씨/배경)은 검은색이 됩니다.
+    _, thresh = cv2.threshold(blurred, sens, 255, cv2.THRESH_BINARY)
+    
+    # 4. 테두리 찾기
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     output_img = frame.copy()
     count = 0
+    
     for cnt in contours:
         area = cv2.contourArea(cnt)
+        # 설정한 최소 크기보다 큰 덩어리만 알약으로 인정
         if area > min_size:
             M = cv2.moments(cnt)
             if M["m00"] != 0:
-                cX, cY = int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
+                cX = int(M["m10"] / M["m00"])
+                cY = int(M["m01"] / M["m00"])
+                
+                # 초록색 점과 흰색 테두리 표시
                 cv2.circle(output_img, (cX, cY), 20, (0, 255, 0), -1)
                 cv2.circle(output_img, (cX, cY), 25, (255, 255, 255), 3)
                 count += 1
-    return output_img, count
+                
+    return output_img, count, thresh
 
-# --- 사이드바 설정 ---
+# --- 사이드바: 약 종류와 조명에 따라 조절 ---
 with st.sidebar:
-    st.header("⚙️ 인식 설정")
-    sens = st.slider("민감도", 10, 255, 120)
-    blur_val = st.slider("노이즈 제거", 1, 31, 15, step=2)
-    min_size = st.slider("최소 알약 크기", 50, 3000, 300)
+    st.header("⚙️ 정밀 인식 설정")
+    st.write("글씨가 같이 잡히면 '민감도'를 높이세요.")
+    sens = st.slider("민감도 (밝기 기준)", 10, 255, 150) # 기본값을 조금 높여서 글씨 배제
+    blur_val = st.slider("글씨 뭉개기 강도", 1, 31, 15, step=2)
+    min_size = st.slider("최소 알약 크기", 100, 5000, 500)
+    
+    st.divider()
+    st.info("💡 **팁**: 검은색 종이 위에서 찍으면 가장 정확합니다!")
 
-# --- 메인 화면 탭 (실시간 대신 2가지 강력한 모드) ---
+# --- 메인 화면 탭 구성 ---
 tab1, tab2 = st.tabs(["📸 카메라 촬영", "📁 파일 업로드"])
 
 with tab1:
-    st.subheader("카메라로 즉시 분석")
-    # 스마트폰 브라우저에서 가장 안정적인 방식
-    img_snap = st.camera_input("알약을 비추고 사진을 찍으세요")
+    img_snap = st.camera_input("알약을 평평하게 펴고 찍어주세요")
     if img_snap:
         img = Image.open(img_snap)
-        res_img, cnt = count_pills(np.array(img), sens, min_size, blur_val)
-        st.image(res_img)
-        st.metric("감지된 개수", f"{cnt}개")
-
-with tab2:
-    st.subheader("앨범/파일에서 가져오기")
-    img_up = st.file_uploader("이미지를 업로드하세요", type=['jpg','png','jpeg'])
-    if img_up:
-        img = Image.open(img_up)
-        res_img, cnt = count_pills(np.array(img), sens, min_size, blur_val)
-        st.image(res_img)
-        st.metric("감지된 개수", f"{cnt}개")
+        frame = np.array(img)
+        res_img, cnt, debug_img = count_pills(frame, sens, min_size, blur_val)
+        st.image(res_img, use_container_width=True)
+        st.success(f"감지된 알약: {cnt}개")
+        with st.expander("AI 분석 레이어 확인"):
+            st.image(debug_img, caption="흰
