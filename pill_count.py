@@ -15,8 +15,7 @@ def count_pills(frame, sens, min_size, blur_val):
     # 2. 노이즈 제거 (글씨처럼 얇은 선들을 뭉개서 지워버림)
     blurred = cv2.GaussianBlur(gray, (blur_val, blur_val), 0)
     
-    # 3. ⭐ 핵심 수정: 배경보다 '밝은' 물체만 추출 (글씨 무시 로직)
-    # sens 값보다 밝은 것(알약)은 흰색, 어두운 것(글씨/배경)은 검은색이 됩니다.
+    # 3. 글씨 무시 로직: 배경보다 '밝은' 물체만 추출
     _, thresh = cv2.threshold(blurred, sens, 255, cv2.THRESH_BINARY)
     
     # 4. 테두리 찾기
@@ -27,7 +26,6 @@ def count_pills(frame, sens, min_size, blur_val):
     
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        # 설정한 최소 크기보다 큰 덩어리만 알약으로 인정
         if area > min_size:
             M = cv2.moments(cnt)
             if M["m00"] != 0:
@@ -41,16 +39,16 @@ def count_pills(frame, sens, min_size, blur_val):
                 
     return output_img, count, thresh
 
-# --- 사이드바: 약 종류와 조명에 따라 조절 ---
+# --- 사이드바: 조절 설정 ---
 with st.sidebar:
     st.header("⚙️ 정밀 인식 설정")
     st.write("글씨가 같이 잡히면 '민감도'를 높이세요.")
-    sens = st.slider("민감도 (밝기 기준)", 10, 255, 150) # 기본값을 조금 높여서 글씨 배제
+    sens = st.slider("민감도 (밝기 기준)", 10, 255, 150)
     blur_val = st.slider("글씨 뭉개기 강도", 1, 31, 15, step=2)
     min_size = st.slider("최소 알약 크기", 100, 5000, 500)
     
     st.divider()
-    st.info("💡 **팁**: 검은색 종이 위에서 찍으면 가장 정확합니다!")
+    st.info("💡 팁: 검은색 종이 위에서 찍으면 가장 정확합니다!")
 
 # --- 메인 화면 탭 구성 ---
 tab1, tab2 = st.tabs(["📸 카메라 촬영", "📁 파일 업로드"])
@@ -64,4 +62,15 @@ with tab1:
         st.image(res_img, use_container_width=True)
         st.success(f"감지된 알약: {cnt}개")
         with st.expander("AI 분석 레이어 확인"):
-            st.image(debug_img, caption="흰
+            st.image(debug_img, caption="흰색 덩어리만 알약으로 인식됩니다.")
+
+with tab2:
+    img_up = st.file_uploader("앨범에서 사진 선택", type=['jpg', 'jpeg', 'png'])
+    if img_up:
+        img = Image.open(img_up)
+        frame = np.array(img)
+        res_img, cnt, debug_img = count_pills(frame, sens, min_size, blur_val)
+        st.image(res_img, use_container_width=True)
+        st.metric("감지된 개수", f"{cnt} 개")
+        with st.expander("AI 분석 레이어 확인"):
+            st.image(debug_img, caption="분석용 흑백 화면")
